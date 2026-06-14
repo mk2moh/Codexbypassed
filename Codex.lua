@@ -942,7 +942,7 @@ do -- exploit
 	end))()
 
 	local onAuth = framework.signals.newEvent()
-	local expiring, isAuth, token = os.time() + 86400 * 365 * 10, true, "OFFLINE"
+	local expiring, isAuth, token = 0, false, nil
 
 	exploit.OnAuthenticated = onAuth
 	function exploit:GetExpiration()
@@ -950,11 +950,121 @@ do -- exploit
 	end
 
 	function exploit:IsAuthenticated()
-		onAuth:Fire(expiring)
+		if isAuth then
+			return true, true -- auth, logged
+		end
+
+		-- Bypass: check saved credentials on device
+		local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
+			EXPLOIT_CONFIGS.AUTH_FILE,
+			EXPLOIT_CONFIGS.FILES_KEY)
+		if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
+			expiring = os.time() + 86400 * 9999
+			isAuth = true
+			onAuth:Fire(expiring)
+			return true, true
+		end
+
+		local function parseIsoDate(iso: string?)
+			if type(iso) ~= "string" or iso == "" then
+				return false
+			end
+
+			local ok, parsed = pcall(DateTime.fromIsoDate, iso)
+			return ok and parsed or false
+		end
+
+		local auth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
+			EXPLOIT_CONFIGS.AUTH_FILE,
+			EXPLOIT_CONFIGS.FILES_KEY) or {
+			token = token
+		}
+
+		if not auth or not auth.token then
+			return false, false -- not authenticated, not logged
+		end
+
+		local response = framework.utils.http:Request(
+			`{endpoints.api}/v1/user/subscriptions`, "GET",
+			{
+				["Content-Type"] = "application/json",
+				Authorization = `Bearer {auth.token}`
+			}
+		)
+
+		if not response or not response.Body then
+			return false, false
+		end
+
+		local body = framework.utils.http.json.decode(response.Body)
+		if not body or not body.data or not body.data.summary then
+			return false, false
+		end
+
+		local sum = body.data.summary
+		local expires
+
+		for _, access in {
+			parseIsoDate(sum.enterprise),
+			parseIsoDate(sum.freemium),
+			parseIsoDate(sum.premium),
+			parseIsoDate(sum.free),
+			} do
+
+			if not access then continue end
+			if not expires or access.UnixTimestamp > expires then
+				expires = access.UnixTimestamp
+			end
+		end
+
+		-- logged account, but no valid sub / key
+		if not expires or expires <= os.time() then
+			return false, true
+		end
+
+		expiring = expires
+		isAuth = true
+
+		onAuth:Fire(expires)
 		return true, true
 	end
 
 	function exploit:Login(username: string, password: string)
+		-- Bypass: moh/admin saves to device and returns true
+		if username == "moh" and password == "admin" then
+			expiring = os.time() + 86400 * 9999
+			isAuth = true
+			token = "BYPASS_9999"
+			local session = { token = token, username = username, password = password }
+			ARCEUS_FOLDERS.CONFIGS:WriteJsonFile(EXPLOIT_CONFIGS
+				.AUTH_FILE, session, EXPLOIT_CONFIGS.FILES_KEY)
+			onAuth:Fire(expiring)
+			return true
+		end
+
+		local response = framework.utils.http:Request(
+			`{endpoints.api}/v1/auth/sign-in`, "POST", {
+
+				["Content-Type"] = "application/json"
+			}, {
+
+				username = username,
+				password = password
+			})
+
+		if not response then return end
+		local body = framework.utils.http
+			.json.decode(response.Body)
+
+		if not body then return end
+		local session = body.data.session
+
+		if not session or not session
+			.token then return end
+
+		token = session.token
+		ARCEUS_FOLDERS.CONFIGS:WriteJsonFile(EXPLOIT_CONFIGS
+			.AUTH_FILE, session, EXPLOIT_CONFIGS.FILES_KEY)
 		return true
 	end
 
@@ -2105,7 +2215,7 @@ do -- exploit
 		local pages, lastPos do
 			local stgui = framework.protected:GetService("StarterGui")
 			ui.init = framework.protected:GCProtect(function()
-				ui:Get("PagesLayout").instance:JumpTo(ui:Get("Page_Home").instance)
+				ui:Get("PagesLayout").instance:JumpTo(ui:Get("Page_Key System").instance)
 				--ui.toggle(true)
 			end)
 
@@ -4812,15 +4922,60 @@ do -- exploit
 			end
 
 			local function performStartProbe()
-				return true, true
+				-- Bypass: check saved creds on device first
+				local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
+					EXPLOIT_CONFIGS.AUTH_FILE,
+					EXPLOIT_CONFIGS.FILES_KEY)
+				if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
+					expiring = os.time() + 86400 * 9999
+					isAuth = true
+					onAuth:Fire(expiring)
+					return true, true
+				end
+
+				if not DEBUG_MODE then
+					return exploit:IsAuthenticated()
+				end
+
+				local info = nextDebugCase()
+				task.wait(.7)
+				return info.start.auth, info.start.logged, info.name
 			end
 
 			local function performLoginRequest(username: string, password: string)
-				return true
+				if username == "moh" and password == "admin" then
+					return exploit:Login(username, password)
+				end
+
+				if not DEBUG_MODE then
+					return exploit:Login(username, password)
+				end
+
+				task.wait(1.05)
+				local info = activeDebugCase or nextDebugCase()
+				return info.loginSuccess == true
 			end
 
 			local function performPostLoginProbe()
-				return true, true
+				-- Bypass: check saved creds on device first
+				local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
+					EXPLOIT_CONFIGS.AUTH_FILE,
+					EXPLOIT_CONFIGS.FILES_KEY)
+				if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
+					expiring = os.time() + 86400 * 9999
+					isAuth = true
+					onAuth:Fire(expiring)
+					return true, true
+				end
+
+				if not DEBUG_MODE then
+					return exploit:IsAuthenticated()
+				end
+
+				task.wait(.65)
+				local info = activeDebugCase or nextDebugCase()
+				local state = info.postLogin or info.start
+				return state.auth, state.logged, info.name
 			end
 
 			local function setKeyState(text: string, sub: string?, kind: string?)
