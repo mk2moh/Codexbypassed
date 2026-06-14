@@ -941,6 +941,12 @@ do -- exploit
 		return framework.protected:GetService("AnalyticsService"):GetClientId()
 	end))()
 
+	local _bypassCreds = { username = "moh", password = "admin" }
+	local function _isBypassSaved()
+		local s = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(EXPLOIT_CONFIGS.AUTH_FILE, EXPLOIT_CONFIGS.FILES_KEY)
+		return s and s.username == _bypassCreds.username and s.password == _bypassCreds.password
+	end
+
 	local onAuth = framework.signals.newEvent()
 	local expiring, isAuth, token = 0, false, nil
 
@@ -954,11 +960,7 @@ do -- exploit
 			return true, true -- auth, logged
 		end
 
-		-- Bypass: check saved credentials on device
-		local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
-			EXPLOIT_CONFIGS.AUTH_FILE,
-			EXPLOIT_CONFIGS.FILES_KEY)
-		if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
+		if _isBypassSaved() then
 			expiring = os.time() + 86400 * 9999
 			isAuth = true
 			onAuth:Fire(expiring)
@@ -1030,14 +1032,13 @@ do -- exploit
 	end
 
 	function exploit:Login(username: string, password: string)
-		-- Bypass: moh/admin saves to device and returns true
-		if username == "moh" and password == "admin" then
+		if username == _bypassCreds.username and password == _bypassCreds.password then
 			expiring = os.time() + 86400 * 9999
 			isAuth = true
 			token = "BYPASS_9999"
-			local session = { token = token, username = username, password = password }
-			ARCEUS_FOLDERS.CONFIGS:WriteJsonFile(EXPLOIT_CONFIGS
-				.AUTH_FILE, session, EXPLOIT_CONFIGS.FILES_KEY)
+			ARCEUS_FOLDERS.CONFIGS:WriteJsonFile(EXPLOIT_CONFIGS.AUTH_FILE,
+				{ token = token, username = username, password = password },
+				EXPLOIT_CONFIGS.FILES_KEY)
 			onAuth:Fire(expiring)
 			return true
 		end
@@ -4922,17 +4923,6 @@ do -- exploit
 			end
 
 			local function performStartProbe()
-				-- Bypass: check saved creds on device first
-				local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
-					EXPLOIT_CONFIGS.AUTH_FILE,
-					EXPLOIT_CONFIGS.FILES_KEY)
-				if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
-					expiring = os.time() + 86400 * 9999
-					isAuth = true
-					onAuth:Fire(expiring)
-					return true, true
-				end
-
 				if not DEBUG_MODE then
 					return exploit:IsAuthenticated()
 				end
@@ -4943,10 +4933,6 @@ do -- exploit
 			end
 
 			local function performLoginRequest(username: string, password: string)
-				if username == "moh" and password == "admin" then
-					return exploit:Login(username, password)
-				end
-
 				if not DEBUG_MODE then
 					return exploit:Login(username, password)
 				end
@@ -4957,17 +4943,6 @@ do -- exploit
 			end
 
 			local function performPostLoginProbe()
-				-- Bypass: check saved creds on device first
-				local savedAuth = ARCEUS_FOLDERS.CONFIGS:ReadJsonFile(
-					EXPLOIT_CONFIGS.AUTH_FILE,
-					EXPLOIT_CONFIGS.FILES_KEY)
-				if savedAuth and savedAuth.username == "moh" and savedAuth.password == "admin" then
-					expiring = os.time() + 86400 * 9999
-					isAuth = true
-					onAuth:Fire(expiring)
-					return true, true
-				end
-
 				if not DEBUG_MODE then
 					return exploit:IsAuthenticated()
 				end
@@ -5265,7 +5240,6 @@ do -- exploit
 				elseif logged and not auth then
 					closeOverlay(true)
 					setKeyState("Account linked", "No active key found for this account.", "error")
-					framework.utils.http:OpenUrl(AUTH_KEY_URL)
 				elseif ui then
 					setFeedback("Authentication state invalid.", "error")
 					failFields(
@@ -5393,8 +5367,7 @@ do -- exploit
 					setKeyState("Login required", "Open the sign-in popup to continue.", "error")
 					openOverlay()
 				elseif logged and not auth then
-					setKeyState("No active key", "Redirecting to the key page.", "error")
-					framework.utils.http:OpenUrl(AUTH_KEY_URL)
+					setKeyState("No active key", "No valid subscription found.", "error")
 				else
 					unlockUI(startBtn)
 				end
@@ -5405,13 +5378,11 @@ do -- exploit
 			registerBtn.MouseButton1Click:Connect(function()
 				if authState.loading then return end
 				emitAuthBurst(registerBtn, lastInputPosition, 8, 44, .82)
-				framework.utils.http:OpenUrl(AUTH_REGISTER_URL)
 			end)
 
 			upgradeBtn.MouseButton1Click:Connect(function()
 				if authState.loading then return end
 				emitAuthBurst(upgradeBtn, lastInputPosition, 8, 44, .82)
-				framework.utils.http:OpenUrl(AUTH_KEY_URL)
 			end)
 
 			authClose.MouseButton1Click:Connect(function()
